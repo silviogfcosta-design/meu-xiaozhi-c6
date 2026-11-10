@@ -1,0 +1,75 @@
+name: Orion C6 com toque
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v6.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: 78/xiaozhi-esp32
+          ref: a73e9a7e266e3196d1368ba46c30bee0d81f0a64
+      - name: Adaptar placa C6 com ST7789 e audio I2S
+        shell: python3 {0}
+        run: |
+          from pathlib import Path
+          import re, json
+          board = Path("main/boards/bread-compact-wifi-lcd")
+          config = board / "config.h"
+          h = config.read_text().replace("#define AUDIO_I2S_METHOD_SIMPLEX\n", "")
+          pins = dict(AUDIO_OUTPUT_SAMPLE_RATE="16000", AUDIO_I2S_GPIO_BCLK="GPIO_NUM_18",
+            AUDIO_I2S_GPIO_WS="GPIO_NUM_19", AUDIO_I2S_GPIO_DIN="GPIO_NUM_20",
+            AUDIO_I2S_GPIO_DOUT="GPIO_NUM_14", DISPLAY_MOSI_PIN="GPIO_NUM_7",
+            DISPLAY_CLK_PIN="GPIO_NUM_6", DISPLAY_DC_PIN="GPIO_NUM_4",
+            DISPLAY_RST_PIN="GPIO_NUM_3", DISPLAY_CS_PIN="GPIO_NUM_5",
+            DISPLAY_BACKLIGHT_PIN="GPIO_NUM_NC", BOOT_BUTTON_GPIO="GPIO_NUM_9")
+          for key, value in pins.items():
+              h, count = re.subn(r"(?m)^#define "+key+r"[ \t]+[^\n]+", "#define "+key+" "+value, h, count=1)
+              assert count == 1, key
+          start = h.index("#ifdef CONFIG_LCD_ST7789_240X320\n")
+          end = h.index("#endif", start)
+          panel = h[start:end].replace("WIDTH   240","WIDTH   320").replace("HEIGHT  320","HEIGHT  240").replace("SWAP_XY false","SWAP_XY true").replace("MIRROR_X false","MIRROR_X true")
+          config.write_text(h[:start]+panel+h[end:])
+          cc = board / "compact_wifi_board_lcd.cc"
+          s = cc.read_text().replace("SPI3_HOST","SPI2_HOST").replace("40 * 1000 * 1000","20 * 1000 * 1000")
+          s = re.sub(r"    virtual Led\* GetLed\(\) override \{.*?\n    \}", "", s, flags=re.S)
+          s = s.replace("static LampController lamp(LAMP_GPIO);","").replace('#include "lamp_controller.h"','')
+          # Entrada digital do modulo capacitivo: momentaneo, ativo alto.
+          def mudar(origem, destino):
+              global s
+              assert s.count(origem) == 1, origem
+              s = s.replace(origem, destino)
+          mudar("Button boot_button_;", "Button boot_button_;\n    Button touch_button_{GPIO_NUM_2, true};")
+          mudar("void InitializeButtons() {", """void InitializeButtons() {
+                  gpio_set_pull_mode(GPIO_NUM_2, GPIO_PULLDOWN_ONLY);
+                  touch_button_.OnClick([]() {
+                      auto& app = Application::GetInstance();
+                      if (app.GetDeviceState() != kDeviceStateStarting) app.ToggleChatState();
+                  });""")
+          cc.write_text(s)
+          k = Path("main/Kconfig.projbuild")
+          s = k.read_text()
+          start = s.index("config BOARD_TYPE_BREAD_COMPACT_WIFI_LCD\n")
+          k.write_text(s[:start]+s[start:].replace("depends on IDF_TARGET_ESP32S3","depends on IDF_TARGET_ESP32C6",1))
+          config = board / "config.json"
+          settings = json.loads(config.read_text())
+          settings.update(target="esp32c6", type="silvio-c6-lcd")
+          build = settings["builds"][0]
+          build["name"] = "silvio-c6-lcd"
+          build["sdkconfig_append"] += ["CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI_LCD=y",
+            "CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y",
+            'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/v2/4m.csv"',
+            "CONFIG_COMPILER_OPTIMIZATION_SIZE=y"]
+          config.write_text(json.dumps(settings, indent=2))
+      - name: Compilar em portugues para flash de 4 MB
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh"
+          python scripts/build.py bread-compact-wifi-lcd --name silvio-c6-lcd --language pt-BR --wake-word disabled
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xiaozhi-C6-Silvio
+          path: build/merged-binary.bin
+          if-no-files-found: error
