@@ -17,18 +17,17 @@ jobs:
     container: espressif/idf:release-v6.1
 
     steps:
-      - name: Carregar os arquivos do projeto Orion
-        uses: actions/checkout@v4
-        with:
-          path: orion-project
-          ref: main
-
       - name: Carregar a base Xiaozhi
         uses: actions/checkout@v4
         with:
           repository: 78/xiaozhi-esp32
           ref: a73e9a7e266e3196d1368ba46c30bee0d81f0a64
-          clean: false
+
+      - name: Carregar os arquivos do projeto Orion
+        uses: actions/checkout@v4
+        with:
+          path: orion-project
+          ref: main
 
       - name: Integrar tela, audio, toque e interface Orion
         shell: python3 {0}
