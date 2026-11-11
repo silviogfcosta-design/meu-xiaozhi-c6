@@ -99,16 +99,19 @@ jobs:
               "    Button boot_button_;" + nl + "    Button touch_button_{GPIO_NUM_2, true};",
               1,
           )
+          touch_block = (
+              "    void InitializeButtons() {" + nl
+              "        gpio_set_pull_mode(GPIO_NUM_2, GPIO_PULLDOWN_ONLY);" + nl
+              "        touch_button_.OnClick([]() {" + nl
+              "            auto& app = Application::GetInstance();" + nl
+              "            if (app.GetDeviceState() != kDeviceStateStarting) {" + nl
+              "                app.ToggleChatState();" + nl
+              "            }" + nl
+              "        });"
+          )
           s = s.replace(
               "    void InitializeButtons() {",
-              """    void InitializeButtons() {
-        gpio_set_pull_mode(GPIO_NUM_2, GPIO_PULLDOWN_ONLY);
-        touch_button_.OnClick([]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() != kDeviceStateStarting) {
-                app.ToggleChatState();
-            }
-        });""",
+              touch_block,
               1,
           )
           s = s.replace("        InitializeLcdDisplay();", "        InitializeLcdDisplay();" + nl + "        ui_orion_start();", 1)
