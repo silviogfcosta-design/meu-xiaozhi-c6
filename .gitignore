@@ -1,0 +1,7 @@
+.gradle/
+**/build/
+local.properties
+sdkconfig
+sdkconfig.old
+components/
+managed_components/
