@@ -325,10 +325,10 @@ public class EquimosService extends Service {
         }
         JSONObject root = new JSONObject(body);
         JSONArray candidates = root.optJSONArray("candidates");
-        if (candidates == null || candidates.length() == 0) return "";
+        if (candidates == null || candidates.length() == 0) return new JSONObject();
         JSONObject content = candidates.getJSONObject(0).optJSONObject("content");
         JSONArray answerParts = content == null ? null : content.optJSONArray("parts");
-        if (answerParts == null) return "";
+        if (answerParts == null) return new JSONObject();
         StringBuilder answer = new StringBuilder();
         for (int i = 0; i < answerParts.length(); i++) {
             String text = answerParts.getJSONObject(i).optString("text", "");

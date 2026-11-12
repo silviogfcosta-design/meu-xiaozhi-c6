@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
     private static final int CYAN = Color.rgb(0, 217, 245);
     private static final int WHITE = Color.rgb(242, 247, 255);
     private static final int MUTED = Color.rgb(149, 169, 194);
+    private static final int WIFI_PERMISSION_REQUEST = 72;
     private final ExecutorService worker = Executors.newCachedThreadPool();
     private final ScheduledExecutorService periodic = Executors.newSingleThreadScheduledExecutor();
 
@@ -264,6 +265,17 @@ public class MainActivity extends Activity {
             toast("Este app requer Android 10 ou mais recente.");
             return;
         }
+        String wifiPermission = Build.VERSION.SDK_INT >= 33
+                ? Manifest.permission.NEARBY_WIFI_DEVICES
+                : Manifest.permission.ACCESS_FINE_LOCATION;
+        if (checkSelfPermission(wifiPermission) != PackageManager.PERMISSION_GRANTED) {
+            String[] permissions = Build.VERSION.SDK_INT >= 33
+                    ? new String[]{Manifest.permission.NEARBY_WIFI_DEVICES}
+                    : new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                                   Manifest.permission.ACCESS_COARSE_LOCATION};
+            requestPermissions(permissions, WIFI_PERMISSION_REQUEST);
+            return;
+        }
         try {
             if (wifiCallback != null) connectivity.unregisterNetworkCallback(wifiCallback);
         } catch (Exception ignored) {}
@@ -283,9 +295,9 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     connectionLabel.setText("Wi-Fi do Equimos conectado");
                     connectionLabel.setTextColor(CYAN);
+                    ensureService();
+                    requestCellularNetwork();
                 });
-                ensureService();
-                requestCellularNetwork();
             }
             @Override
             public void onUnavailable() {
@@ -303,7 +315,28 @@ public class MainActivity extends Activity {
             }
         };
         connectionLabel.setText("Aguardando autorização do Wi-Fi…");
-        connectivity.requestNetwork(request, wifiCallback);
+        try {
+            connectivity.requestNetwork(request, wifiCallback);
+        } catch (RuntimeException e) {
+            wifiCallback = null;
+            connectionLabel.setText("Não foi possível solicitar a conexão Wi-Fi.");
+            toast("Confira as permissões do Equimos e ative o Wi-Fi do telefone.");
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != WIFI_PERMISSION_REQUEST) return;
+        String required = Build.VERSION.SDK_INT >= 33
+                ? Manifest.permission.NEARBY_WIFI_DEVICES
+                : Manifest.permission.ACCESS_FINE_LOCATION;
+        if (checkSelfPermission(required) == PackageManager.PERMISSION_GRANTED) {
+            connectToDevice();
+        } else {
+            toast("Autorize o acesso aos aparelhos Wi-Fi próximos para conectar ao Equimos.");
+        }
     }
 
     private void ensureService() {

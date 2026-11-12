@@ -47,7 +47,7 @@ bool audio_read_mono(int16_t *samples, size_t requested) {
     int32_t raw[EQUIMOS_FRAME_SAMPLES * 2];
     size_t bytes_read = 0;
     esp_err_t err = i2s_channel_read(rx_channel, raw, sizeof(raw), &bytes_read,
-                                     pdMS_TO_TICKS(60));
+                                     60);
     if (err != ESP_OK || bytes_read < sizeof(int32_t) * 2) {
         return false;
     }
@@ -90,7 +90,7 @@ void audio_play_mono(const int16_t *samples, size_t count) {
         size_t written = 0;
         if (i2s_channel_write(tx_channel, stereo,
                               n * 2 * sizeof(int32_t), &written,
-                              pdMS_TO_TICKS(300)) != ESP_OK) {
+                              300) != ESP_OK) {
             break;
         }
         offset += n;
