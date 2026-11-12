@@ -1,0 +1,149 @@
+name: Equimos - publicar e compilar
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - Equimos_Projeto_Independente.zip
+      - .github/workflows/equimos-publish.yml
+
+concurrency:
+  group: equimos-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    name: Instalar codigo independente
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.install.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extrair fontes e registrar no repositorio
+        id: install
+        env:
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import stat
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          count = 0
+          with zipfile.ZipFile('Equimos_Projeto_Independente.zip') as archive:
+              for item in archive.infolist():
+                  p = PurePosixPath(item.filename)
+                  if p.is_absolute() or '..' in p.parts:
+                      raise ValueError('Caminho invalido no pacote')
+                  if stat.S_ISLNK(item.external_attr >> 16):
+                      raise ValueError('Link simbolico inesperado')
+                  if item.is_dir():
+                      continue
+                  if p.parts[0] not in ('firmware', 'android') and str(p) not in ('README.md', '.gitignore'):
+                      continue
+                  dest = Path(str(p))
+                  dest.parent.mkdir(parents=True, exist_ok=True)
+                  dest.write_bytes(archive.read(item))
+                  count += 1
+          if not Path('firmware/main/main.c').is_file() or not Path('android/app/build.gradle').is_file():
+              raise RuntimeError('Pacote incompleto')
+          print(f'{count} arquivos de firmware e Android preparados')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- firmware android README.md .gitignore
+          if ! git diff --cached --quiet; then
+            git commit -m 'Publicar fontes independentes do Equimos'
+            git push origin "HEAD:$TARGET_BRANCH"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  firmware:
+    name: Firmware ESP32-C6
+    needs: source
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - name: Compilar e unir binarios
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py -C firmware -DIDF_TARGET=esp32c6 build
+          idf.py -C firmware merge-bin -o "$GITHUB_WORKSPACE/firmware/build/equimos-merged.bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Equimos-C6-firmware
+          path: firmware/build/equimos-merged.bin
+          if-no-files-found: error
+
+  android:
+    name: Aplicativo Android
+    needs: source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Compilar APK de instalacao
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Equimos-Android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  release:
+    name: Disponibilizar downloads
+    needs: [source, firmware, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publicar previa instalavel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          cp Equimos_Projeto_Independente.zip dist/
+          mv dist/app-debug.apk dist/Equimos-Android.apk
+          (cd dist && sha256sum Equimos-Android.apk equimos-merged.bin Equimos_Projeto_Independente.zip > SHA256SUMS.txt)
+          cat > release-notes.md <<'NOTES'
+          Equimos independente: firmware ESP32-C6 e aplicativo Android.
+
+          - Equimos-Android.apk: aplicativo de instalacao direta para Android 10 ou superior.
+          - equimos-merged.bin: firmware unido para ESP32-C6, gravacao no endereco 0x0.
+          - Equimos_Projeto_Independente.zip: codigo-fonte e instrucoes.
+          - SHA256SUMS.txt: resumos SHA-256 dos arquivos.
+
+          A compilacao automatica verifica o codigo. O funcionamento da tela, microfone, alto-falante e Wi-Fi ainda requer verificacao no hardware do usuario. A conversa requer chave Gemini e cota gratuita disponivel. A chave nao e incluida nos downloads.
+          NOTES
+          gh release create "equimos-build-${GITHUB_RUN_NUMBER}" dist/* \
+            --target "$SOURCE_SHA" \
+            --title "Equimos - previa ${GITHUB_RUN_NUMBER}" \
+            --notes-file release-notes.md --prerelease
